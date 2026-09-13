@@ -1,0 +1,54 @@
+# 数据 (用户要求不上传)
+data/
+*.db
+*.db-shm
+*.db-wal
+*.pbf
+
+# 构建产物
+bin/
+
+# 日志
+*.log
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 临时/调试产物
+*.tmp
+*.bak
+*~
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# Windows reserved name
+nul
+
+# 灌库调试临时
+tdt_*.json
+tdt_*.bin
+tdt_*.probe.json
+vb_fix2_*.err
+in.zip
+check_enc.json
+_empty_pts.geojson
+_empty_pts.json
+
+# 大型参考数据 (不入库)
+china_area/
+village-boundaries/
+xzqh_cache/
+xzqh_*.html
+nul
+*.probe.json
+cmd/probe/
+cmd/sqltest/
+report-village-boundary.md
