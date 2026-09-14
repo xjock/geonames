@@ -19,6 +19,7 @@ INDEXES = [
     ('idx_pm_country_id', 'CREATE INDEX idx_pm_country_id ON poi_master(country_id)'),
     ('idx_pn_poi_id', 'CREATE INDEX idx_pn_poi_id ON poi_name(poi_id)'),
     ('idx_pn_lang', 'CREATE INDEX idx_pn_lang ON poi_name(lang)'),
+    ('idx_pn_name', 'CREATE INDEX idx_pn_name ON poi_name(name)'),
 ]
 
 

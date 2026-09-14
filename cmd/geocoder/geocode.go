@@ -3,12 +3,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type POI struct {
@@ -97,7 +99,7 @@ func (h *handlers) searchLocal(ctx context.Context, q, ccFilter, lang string, li
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT `+poiSelectCols+`
 		FROM poi_master
-		WHERE (name_zh = ? COLLATE NOCASE OR name_en = ? COLLATE NOCASE)
+		WHERE (name_zh = ? OR name_en = ?)
 		  AND lat IS NOT NULL AND lon IS NOT NULL
 		  AND (? = '' OR cc = ?)
 		ORDER BY importance DESC, pop DESC
@@ -128,7 +130,7 @@ func (h *handlers) searchLocal(ctx context.Context, q, ccFilter, lang string, li
 			SELECT `+pmSelectCols+`
 			FROM poi_name pn
 			JOIN poi_master pm ON pm.id = pn.poi_id
-			WHERE pn.name = ? COLLATE NOCASE
+			WHERE pn.name = ?
 			  AND pm.lat IS NOT NULL AND pm.lon IS NOT NULL
 			  AND (? = '' OR pm.cc = ?)
 			ORDER BY pm.importance DESC, pm.pop DESC
@@ -156,18 +158,32 @@ func (h *handlers) searchLocal(ctx context.Context, q, ccFilter, lang string, li
 	}
 
 	if len(out) < limit {
-		ccClause := ""
+		ccClausePM := ""
 		ccArgs := []any{}
 		if ccFilter != "" {
-			ccClause = "AND cc = ?"
+			ccClausePM = "AND pm.cc = ?"
 			ccArgs = []any{ccFilter}
 		}
 		ts = time.Now()
-		rows3, err := h.db.QueryContext(ctx,
-			"SELECT "+poiSelectCols+" FROM poi_master WHERE (name_zh LIKE ? COLLATE NOCASE OR name_en LIKE ? COLLATE NOCASE) AND lat IS NOT NULL AND lon IS NOT NULL "+ccClause+" ORDER BY CASE WHEN lower(name_zh) = ? OR lower(name_en) = ? THEN 0 ELSE 1 END, importance DESC, pop DESC LIMIT ?",
-			append(append([]any{like, like, qLower, qLower}, ccArgs...), limit)...)
+		var rows3 *sql.Rows
+		var q3err error
+		// FTS5 (trigram) for q >= 3 chars; LIKE fallback for shorter
+		if utf8.RuneCountInString(q) >= 3 {
+			ftsQ := `"` + strings.ReplaceAll(q, `"`, `""`) + `"`
+			rows3, q3err = h.db.QueryContext(ctx,
+				`SELECT `+pmSelectCols+` FROM poi_master pm
+				 JOIN poi_fts ON pm.id = poi_fts.rowid
+				 WHERE poi_fts MATCH ? AND pm.lat IS NOT NULL AND pm.lon IS NOT NULL `+ccClausePM+`
+				 ORDER BY CASE WHEN lower(pm.name_zh) = ? OR lower(pm.name_en) = ? THEN 0 ELSE 1 END, pm.importance DESC, pm.pop DESC LIMIT ?`,
+				append(append([]any{ftsQ, qLower, qLower}, ccArgs...), limit)...)
+		} else {
+			rows3, q3err = h.db.QueryContext(ctx,
+				"SELECT "+poiSelectCols+" FROM poi_master WHERE (name_zh LIKE ? COLLATE NOCASE OR name_en LIKE ? COLLATE NOCASE) AND lat IS NOT NULL AND lon IS NOT NULL "+ccClausePM+" ORDER BY CASE WHEN lower(name_zh) = ? OR lower(name_en) = ? THEN 0 ELSE 1 END, importance DESC, pop DESC LIMIT ?",
+				append(append([]any{like, like, qLower, qLower}, ccArgs...), limit)...)
+		}
 		q3q := time.Since(ts).Milliseconds()
 		q3s := int64(0)
+		err = q3err
 		if err == nil {
 			ts2 := time.Now()
 			for rows3.Next() {
@@ -188,7 +204,7 @@ func (h *handlers) searchLocal(ctx context.Context, q, ccFilter, lang string, li
 			rows3.Close()
 			q3s = time.Since(ts2).Milliseconds()
 		}
-		log.Printf("[geocode] q=%q Q3q=%dms Q3s=%dms out=%d", q, q3q, q3s, len(out))
+		log.Printf("[geocode] q=%q Q3q=%dms Q3s=%dms out=%d (mode=%s)", q, q3q, q3s, len(out), map[bool]string{true: "LIKE", false: "FTS5"}[utf8.RuneCountInString(q) < 3])
 	}
 	return out
 }
