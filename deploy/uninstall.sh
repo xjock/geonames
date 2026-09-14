@@ -1,11 +1,10 @@
 #!/bin/bash
-# 卸载 geocoder (保留 db 数据)
+# 卸载 geocoder (默认保留 db 数据)
 # 用法: sudo ./uninstall.sh [--purge]
 set -e
 
 SERVICE_NAME="geocoder"
-APP_DIR="/opt/geocoder"
-DATA_DIR="/var/lib/geocoder"
+DATA_DIR="/tools/sdb/data/world/names"
 APP_USER="geocoder"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -21,18 +20,21 @@ if systemctl list-unit-files "${SERVICE_NAME}.service" &>/dev/null; then
     systemctl daemon-reload
 fi
 
-# 删 app + 用户
-rm -rf "$APP_DIR"
-if id "$APP_USER" &>/dev/null; then
-    userdel "$APP_USER" 2>/dev/null || true
-fi
+# 删二进制 (DATA_DIR 其它文件不动)
+rm -f "$DATA_DIR/geocoder"
+echo "[clean] $DATA_DIR/geocoder removed"
 
 # 数据
 if [ "$1" = "--purge" ]; then
-    rm -rf "$DATA_DIR"
-    echo "[purge] $DATA_DIR 已删"
+    rm -f "$DATA_DIR/geocoder.db" "$DATA_DIR/geocoder.db-shm" "$DATA_DIR/geocoder.db-wal"
+    echo "[purge] $DATA_DIR/geocoder.db* removed"
 else
-    echo "[keep]  $DATA_DIR 保留 (--purge 才删)"
+    echo "[keep]  $DATA_DIR/geocoder.db 保留 (--purge 才删)"
+fi
+
+# 用户
+if id "$APP_USER" &>/dev/null; then
+    userdel "$APP_USER" 2>/dev/null || true
 fi
 
 echo "==== 卸载完成 ===="
