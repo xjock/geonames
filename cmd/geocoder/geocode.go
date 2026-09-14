@@ -92,7 +92,6 @@ const pmSelectCols = `pm.id, pm.source, pm.source_id,
 
 func (h *handlers) searchLocal(ctx context.Context, q, ccFilter, lang string, limit int) []POI {
 	out := []POI{}
-	like := "%" + q + "%"
 	qLower := strings.ToLower(q)
 
 	ts := time.Now()
@@ -167,7 +166,10 @@ func (h *handlers) searchLocal(ctx context.Context, q, ccFilter, lang string, li
 		ts = time.Now()
 		var rows3 *sql.Rows
 		var q3err error
-		// FTS5 (trigram) for q >= 3 chars; LIKE fallback for shorter
+		mode := "FTS5"
+		// FTS5 (trigram) for q >= 3 chars
+		// Short queries (< 3 chars): LIKE prefix (uses idx_pm_name_zh/en)
+		// Then if still < limit: LIKE %q% substring (slow but complete)
 		if utf8.RuneCountInString(q) >= 3 {
 			ftsQ := `"` + strings.ReplaceAll(q, `"`, `""`) + `"`
 			rows3, q3err = h.db.QueryContext(ctx,
@@ -177,9 +179,13 @@ func (h *handlers) searchLocal(ctx context.Context, q, ccFilter, lang string, li
 				 ORDER BY CASE WHEN lower(pm.name_zh) = ? OR lower(pm.name_en) = ? THEN 0 ELSE 1 END, pm.importance DESC, pm.pop DESC LIMIT ?`,
 				append(append([]any{ftsQ, qLower, qLower}, ccArgs...), limit)...)
 		} else {
+			mode = "RANGE"
+			// B-tree 范围扫描, 比 LIKE 前缀快
+			zhHi := q + string(rune(0xFFFF))
+			enHi := q + string(rune(0xFFFF))
 			rows3, q3err = h.db.QueryContext(ctx,
-				"SELECT "+poiSelectCols+" FROM poi_master WHERE (name_zh LIKE ? COLLATE NOCASE OR name_en LIKE ? COLLATE NOCASE) AND lat IS NOT NULL AND lon IS NOT NULL "+ccClausePM+" ORDER BY CASE WHEN lower(name_zh) = ? OR lower(name_en) = ? THEN 0 ELSE 1 END, importance DESC, pop DESC LIMIT ?",
-				append(append([]any{like, like, qLower, qLower}, ccArgs...), limit)...)
+				"SELECT "+poiSelectCols+" FROM poi_master WHERE ((name_zh >= ? AND name_zh < ?) OR (name_en >= ? AND name_en < ?)) AND lat IS NOT NULL AND lon IS NOT NULL "+ccClausePM+" ORDER BY importance DESC, pop DESC LIMIT ?",
+				append(append([]any{q, zhHi, q, enHi}, ccArgs...), limit)...)
 		}
 		q3q := time.Since(ts).Milliseconds()
 		q3s := int64(0)
@@ -204,7 +210,7 @@ func (h *handlers) searchLocal(ctx context.Context, q, ccFilter, lang string, li
 			rows3.Close()
 			q3s = time.Since(ts2).Milliseconds()
 		}
-		log.Printf("[geocode] q=%q Q3q=%dms Q3s=%dms out=%d (mode=%s)", q, q3q, q3s, len(out), map[bool]string{true: "LIKE", false: "FTS5"}[utf8.RuneCountInString(q) < 3])
+		log.Printf("[geocode] q=%q Q3q=%dms Q3s=%dms out=%d (mode=%s)", q, q3q, q3s, len(out), mode)
 	}
 	return out
 }
